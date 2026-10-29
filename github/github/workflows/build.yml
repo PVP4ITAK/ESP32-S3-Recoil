@@ -1,0 +1,77 @@
+name: ESP32-S3 N16R8 USB Touch build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'TouchProfiles.ino'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+
+      - name: Prepare Arduino sketch folder
+        run: |
+          mkdir -p sketch/TouchProfiles
+          cp TouchProfiles.ino sketch/TouchProfiles/TouchProfiles.ino
+
+      - name: Compile ESP32-S3 N16R8
+        run: |
+          mkdir -p dist
+          arduino-cli compile --clean --export-binaries \
+            --fqbn 'esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,FlashMode=qio,PSRAM=opi,PartitionScheme=huge_app' \
+            --output-dir dist sketch/TouchProfiles
+          ls -lah dist
+
+      - name: Create single flash-at-0x0 image
+        run: |
+          python3 -m venv .esptool-venv
+          .esptool-venv/bin/python -m pip install 'esptool==4.9.0'
+          .esptool-venv/bin/python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          from shutil import copy2
+          d = Path('dist')
+          dest = d / 'ESP32S3_N16R8_FLASH_0x0.bin'
+          merged = list(d.glob('*.merged.bin'))
+          if merged:
+              copy2(merged[0], dest)
+          else:
+              bins = list(d.glob('*.bin'))
+              app = [p for p in bins if not any(t in p.name for t in ('.bootloader.', '.partitions.', '.merged.', 'FLASH_0x0'))]
+              boot = list(d.glob('*.bootloader.bin'))
+              partitions = list(d.glob('*.partitions.bin'))
+              if not (len(app) == len(boot) == len(partitions) == 1):
+                  raise RuntimeError(f'Unexpected firmware files: {bins}')
+              cmd = ['.esptool-venv/bin/python', '-m', 'esptool', '--chip', 'esp32s3', 'merge_bin',
+                     '-o', str(dest), '--flash_mode', 'qio', '--flash_freq', '80m', '--flash_size', '16MB',
+                     '0x0', str(boot[0]), '0x8000', str(partitions[0]), '0x10000', str(app[0])]
+              subprocess.run(cmd, check=True)
+          print(f'Created {dest} ({dest.stat().st_size} bytes)')
+          PY
+
+      - name: Upload BIN files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-N16R8-Firmware
+          path: dist/*.bin
+          if-no-files-found: error
+          retention-days: 14
