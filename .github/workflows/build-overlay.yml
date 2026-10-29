@@ -1,0 +1,74 @@
+name: Build S3 Fire Overlay APK and BLE Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'S3FireOverlay_Bundle.zip'
+      - '.github/workflows/build-overlay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android_apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack app source
+        run: unzip -oq S3FireOverlay_Bundle.zip -d .bundle
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Android platform SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Compile debug APK
+        run: gradle -p .bundle/android assembleDebug --no-daemon --stacktrace
+      - name: Publish APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: S3FireOverlay-APK
+          path: .bundle/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  esp32_ble:
+    name: ESP32-S3 BLE + USB HID firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack firmware source
+        run: unzip -oq S3FireOverlay_Bundle.zip -d .bundle
+      - uses: arduino/setup-arduino-cli@v2
+      - name: ESP32 Arduino 3.3.12
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+      - name: Compile for N16R8
+        run: |
+          mkdir -p dist
+          arduino-cli compile --clean --export-binaries \
+            --fqbn 'esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,FlashMode=qio,PSRAM=opi,PartitionScheme=huge_app' \
+            --output-dir dist .bundle/firmware/TouchProfilesBLE
+          test -f dist/TouchProfilesBLE.ino.merged.bin
+          cp dist/TouchProfilesBLE.ino.merged.bin dist/ESP32S3_BLE_FLASH_0x0.bin
+          ls -lah dist
+      - name: Publish 0x0 firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESP32S3-N16R8-BLE-Firmware
+          path: dist/ESP32S3_BLE_FLASH_0x0.bin
+          if-no-files-found: error
+          retention-days: 14
