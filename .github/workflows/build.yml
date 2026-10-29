@@ -19,7 +19,9 @@ jobs:
           arduino-cli core install esp32:esp32@3.3.12
       - name: Compile for ESP32-S3 N16R8 and export bins
         run: |
-          mkdir -p dist
+          mkdir -p dist 
+          mkdir -p TouchProfiles
+cp TouchProfiles.ino TouchProfiles/TouchProfiles.ino
           arduino-cli compile --clean --export-binaries \
             --fqbn 'esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,FlashMode=qio,PSRAM=opi,PartitionScheme=huge_app' \
             --output-dir dist TouchProfiles
