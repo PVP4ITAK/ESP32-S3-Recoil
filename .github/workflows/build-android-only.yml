@@ -1,0 +1,57 @@
+name: Build Pad7 AI Overlay Android-only APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Pad7_AI_Overlay_Source.zip'
+      - '.github/workflows/build-android-only.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Pad7 Android-only APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Android-only source
+        run: unzip -oq Pad7_AI_Overlay_Source.zip -d pad7source
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Install Android SDK platform
+        run: |
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Get official EfficientDet-Lite0 detector
+        run: |
+          mkdir -p pad7source/app/src/main/assets
+          curl --fail --location --retry 3 --output pad7source/app/src/main/assets/efficientdet_lite0.tflite \
+            'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite'
+          test "$(stat -c%s pad7source/app/src/main/assets/efficientdet_lite0.tflite)" -gt 1000000
+
+      - name: Compile APK
+        run: gradle -p pad7source assembleDebug --no-daemon --stacktrace
+
+      - name: Publish installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pad7-AI-Overlay-APK
+          path: pad7source/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
